@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Oiynup — Live</title>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0f0f13;
+      color: #e0e0e0;
+      font-family: system-ui, sans-serif;
+      display: flex; flex-direction: column; align-items: center;
+      min-height: 100vh; padding: 24px 16px;
+    }
+    h1 { font-size: 1.5rem; color: #7ee8a2; margin-bottom: 6px; }
+    .subtitle { font-size: 0.8rem; color: #555; margin-bottom: 24px; }
+
+    .card {
+      background: #1a1a22;
+      border-radius: 12px;
+      padding: 20px 24px;
+      width: 100%; max-width: 640px;
+      margin-bottom: 16px;
+    }
+    .card h2 { font-size: 0.95rem; color: #aaa; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #333; flex-shrink: 0; }
+    .dot.online { background: #7ee8a2; box-shadow: 0 0 6px #7ee8a2; }
+    .dot.error  { background: #f87171; }
+
+    /* ── Аудио ── */
+    #audioStatus { font-size: 0.8rem; color: #666; margin-bottom: 12px; }
+    .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    button {
+      padding: 8px 18px; border-radius: 8px; border: none; cursor: pointer;
+      font-size: 0.85rem; font-weight: 600; transition: opacity .15s;
+    }
+    button:hover { opacity: .85; }
+    #btnListen { background: #7ee8a2; color: #0f0f13; }
+    #btnMute   { background: #3a3a4a; color: #ccc; }
+    .vol-label { font-size: 0.8rem; color: #666; }
+    input[type=range] { accent-color: #7ee8a2; width: 100px; }
+
+    /* Осциллограф */
+    canvas { width: 100%; height: 60px; border-radius: 6px; background: #111; margin-top: 12px; display: block; }
+
+    /* ── Видео ── */
+    video { width: 100%; border-radius: 8px; background: #000; }
+    #videoStatus { font-size: 0.8rem; color: #666; margin-bottom: 10px; }
+
+    /* ── Команды ── */
+    .cmd-row { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+    .cmd-row input, .cmd-row textarea {
+      flex: 1; min-width: 0; padding: 8px 12px; border-radius: 8px;
+      border: 1px solid #333; background: #111; color: #e0e0e0;
+      font-size: 0.85rem; resize: none;
+    }
+    .cmd-row textarea { height: 60px; }
+    .btn-send { background: #7ee8a2; color: #0f0f13; min-width: 90px; }
+    .btn-anim { background: #3a3a4a; color: #ccc; font-size: 0.78rem; padding: 6px 10px; border-radius: 6px; }
+    .btn-anim:hover { background: #4a4a60; }
+    .result-box {
+      margin-top: 8px; padding: 8px 12px; border-radius: 6px;
+      background: #111; font-size: 0.78rem; color: #888;
+      min-height: 28px; word-break: break-all;
+    }
+    .result-box.ok  { color: #7ee8a2; }
+    .result-box.err { color: #f87171; }
+  </style>
+</head>
+<body>
+  <h1>Oiynup Live</h1>
+  <p class="subtitle">Прямая трансляция с устройства</p>
+
+  <!-- ── АУДИО ─────────────────────────────────────────────────── -->
+  <div class="card">
+    <h2><span class="dot" id="audioDot"></span> Аудио · Web Audio API (задержка &lt;100 мс)</h2>
+    <div id="audioStatus">Нажми «Слушать» для подключения</div>
+    <div class="controls">
+      <button id="btnListen" onclick="startAudio()">▶ Слушать</button>
+      <button id="btnMute"   onclick="toggleMute()" style="display:none">🔇 Выкл</button>
+      <span class="vol-label">Громкость</span>
+      <input type="range" id="vol" min="0" max="2" step="0.05" value="1" oninput="setVolume(this.value)">
+    </div>
+    <canvas id="scope"></canvas>
+  </div>
+
+  <!-- ── ВИДЕО / HLS ────────────────────────────────────────────── -->
+  <div class="card">
+    <h2><span class="dot" id="videoDot"></span> Видео · HLS (задержка ~3–6 сек)</h2>
+    <div id="videoStatus">Ожидание HLS потока...</div>
+    <video id="v" controls autoplay muted playsinline></video>
+  </div>
+
+  <!-- ── GSM / SMS ────────────────────────────────────────────── -->
+  <div class="card">
+    <h2><span class="dot" id="gsmDot"></span> GSM · Отправить SMS</h2>
+    <div class="cmd-row">
+      <input id="smsPhone" type="tel" placeholder="+77001234567" style="max-width:180px">
+      <input id="smsText"  type="text" placeholder="Текст сообщения...">
+      <button class="btn-send" onclick="sendSms()">Отправить</button>
+    </div>
+    <div class="result-box" id="smsResult">Введи номер и текст → нажми Отправить</div>
+  </div>
+
+  <!-- ── ГОЛОС (TTS) ───────────────────────────────────────────── -->
+  <div class="card">
+    <h2><span class="dot" id="ttsDot"></span> Голос · Воспроизвести на устройстве</h2>
+    <div class="cmd-row">
+      <input id="speakText" type="text" placeholder="Текст для произношения...">
+      <button class="btn-send" onclick="sendSpeak()">Говорить</button>
+    </div>
+    <div class="result-box" id="speakResult">Введи текст → нажми Говорить</div>
+  </div>
+
+  <!-- ── LED АНИМАЦИИ ──────────────────────────────────────────── -->
+  <div class="card">
+    <h2><span class="dot" id="ledDot"></span> LED · Анимации матрицы</h2>
+    <div class="cmd-row">
+      <button class="btn-anim" onclick="sendAnim('rainbow')">🌈 Rainbow</button>
+      <button class="btn-anim" onclick="sendAnim('happy')">😊 Happy</button>
+      <button class="btn-anim" onclick="sendAnim('thinking')">🤔 Thinking</button>
+      <button class="btn-anim" onclick="sendAnim('listening')">👂 Listening</button>
+      <button class="btn-anim" onclick="sendAnim('correct')">✅ Correct</button>
+      <button class="btn-anim" onclick="sendAnim('wrong')">❌ Wrong</button>
+      <button class="btn-anim" onclick="sendAnim('idle')">💤 Idle</button>
+    </div>
+    <div class="result-box" id="ledResult">Нажми анимацию</div>
+  </div>
+
+  <script>
+  // ═══════════════════════════════════════════════════════════
+  //  АУДИО — PCM over WebSocket → Web Audio API
+  // ═══════════════════════════════════════════════════════════
+  const SAMPLE_RATE = 16000;   // должно совпадать с RPi config
+  const MONITOR_PORT = 8767;
+
+  let audioCtx = null;
+  let gainNode = null;
+  let analyser = null;
+  let nextTime = 0;
+  let ws = null;
+  let muted = false;
+  let rafId = null;
+
+  const audioDot    = document.getElementById('audioDot');
+  const audioStatus = document.getElementById('audioStatus');
+  const btnListen   = document.getElementById('btnListen');
+  const btnMute     = document.getElementById('btnMute');
+  const canvas      = document.getElementById('scope');
+  const ctx2d       = canvas.getContext('2d');
+
+  function startAudio() {
+    if (ws) return;
+    btnListen.disabled = true;
+
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: SAMPLE_RATE });
+    gainNode = audioCtx.createGain();
+    gainNode.gain.value = parseFloat(document.getElementById('vol').value);
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 512;
+    gainNode.connect(analyser);
+    analyser.connect(audioCtx.destination);
+    nextTime = audioCtx.currentTime;
+
+    ws = new WebSocket(`ws://${location.hostname}:${MONITOR_PORT}`);
+    ws.binaryType = 'arraybuffer';
+
+    ws.onopen = () => {
+      audioDot.className = 'dot online';
+      audioStatus.textContent = '🟢 Подключено — слушаем RPi';
+      btnMute.style.display = '';
+      btnListen.style.display = 'none';
+    };
+
+    ws.onmessage = (e) => {
+      const pcm = new Int16Array(e.data);
+      const buf = audioCtx.createBuffer(1, pcm.length, SAMPLE_RATE);
+      const ch  = buf.getChannelData(0);
+      for (let i = 0; i < pcm.length; i++) ch[i] = pcm[i] / 32768;
+
+      const src = audioCtx.createBufferSource();
+      src.buffer = buf;
+      src.connect(gainNode);
+
+      // Планируем точно друг за другом — никаких щелчков и пропусков
+      const t = Math.max(audioCtx.currentTime + 0.05, nextTime);
+      src.start(t);
+      nextTime = t + buf.duration;
+    };
+
+    ws.onclose = () => {
+      audioDot.className = 'dot error';
+      audioStatus.textContent = '🔴 Разрыв соединения — переподключение...';
+      ws = null;
+      btnListen.disabled = false;
+      btnListen.style.display = '';
+      btnMute.style.display = 'none';
+      setTimeout(startAudio, 3000);
+    };
+
+    ws.onerror = () => ws.close();
+
+    drawScope();
+  }
+
+  function toggleMute() {
+    muted = !muted;
+    gainNode.gain.value = muted ? 0 : parseFloat(document.getElementById('vol').value);
+    btnMute.textContent = muted ? '🔊 Вкл' : '🔇 Выкл';
+  }
+
+  function setVolume(v) {
+    if (gainNode && !muted) gainNode.gain.value = parseFloat(v);
+  }
+
+  // Осциллограф
+  function drawScope() {
+    rafId = requestAnimationFrame(drawScope);
+    if (!analyser) return;
+    canvas.width = canvas.offsetWidth;
+    const data = new Uint8Array(analyser.frequencyBinCount);
+    analyser.getByteTimeDomainData(data);
+    ctx2d.clearRect(0, 0, canvas.width, canvas.height);
+    ctx2d.strokeStyle = '#7ee8a2';
+    ctx2d.lineWidth = 1.5;
+    ctx2d.beginPath();
+    const step = canvas.width / data.length;
+    data.forEach((v, i) => {
+      const x = i * step;
+      const y = (v / 255) * canvas.height;
+      i === 0 ? ctx2d.moveTo(x, y) : ctx2d.lineTo(x, y);
+    });
+    ctx2d.stroke();
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  ВИДЕО — HLS
+  // ═══════════════════════════════════════════════════════════
+  const video     = document.getElementById('v');
+  const videoDot  = document.getElementById('videoDot');
+  const videoStat = document.getElementById('videoStatus');
+
+  function startHls() {
+    const src = '/hls/index.m3u8';
+    if (Hls.isSupported()) {
+      const hls = new Hls({ lowLatencyMode: true, liveSyncDurationCount: 2 });
+      hls.loadSource(src);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        videoDot.className = 'dot online';
+        videoStat.textContent = '🟢 Видео онлайн';
+        video.play();
+      });
+      hls.on(Hls.Events.ERROR, (_, d) => {
+        if (d.fatal) {
+          videoDot.className = 'dot error';
+          videoStat.textContent = '🔴 Нет видео потока (нет камеры?) — повтор через 5 сек';
+          hls.destroy();
+          setTimeout(startHls, 5000);
+        }
+      });
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = src;
+      video.addEventListener('loadedmetadata', () => {
+        videoDot.className = 'dot online';
+        videoStat.textContent = '🟢 Видео онлайн';
+        video.play();
+      });
+    }
+  }
+  startHls();
+
+  // ═══════════════════════════════════════════════════════════
+  //  КОМАНДЫ — GSM / TTS / LED
+  // ═══════════════════════════════════════════════════════════
+  async function apiPost(path, body, resultId, dotId) {
+    const box = document.getElementById(resultId);
+    const dot = dotId ? document.getElementById(dotId) : null;
+    box.className = 'result-box';
+    box.textContent = 'Отправляю...';
+    try {
+      const r = await fetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      if (r.ok) {
+        box.className = 'result-box ok';
+        box.textContent = '✓ ' + JSON.stringify(j);
+        if (dot) { dot.className = 'dot online'; setTimeout(() => dot.className = 'dot', 3000); }
+      } else {
+        box.className = 'result-box err';
+        box.textContent = '✗ ' + JSON.stringify(j);
+      }
+    } catch (e) {
+      box.className = 'result-box err';
+      box.textContent = '✗ Ошибка: ' + e.message;
+    }
+  }
+
+  function sendSms() {
+    const phone = document.getElementById('smsPhone').value.trim();
+    const text  = document.getElementById('smsText').value.trim();
+    if (!phone || !text) {
+      const b = document.getElementById('smsResult');
+      b.className = 'result-box err';
+      b.textContent = '✗ Заполни номер и текст';
+      return;
+    }
+    apiPost('/sms', { text, phone }, 'smsResult', 'gsmDot');
+  }
+
+  function sendSpeak() {
+    const text = document.getElementById('speakText').value.trim();
+    if (!text) return;
+    apiPost('/speak', { text }, 'speakResult', 'ttsDot');
+  }
+
+  function sendAnim(name) {
+    document.getElementById('ledResult').textContent = `Запускаю: ${name}...`;
+    apiPost('/display', { animation: name, duration_sec: 5 }, 'ledResult', 'ledDot');
+  }
+  </script>
+</body>
+</html>

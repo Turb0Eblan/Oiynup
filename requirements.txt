@@ -1,0 +1,14 @@
+# Oiynup — зависимости
+# Установка: pip3 install --break-system-packages -r requirements.txt
+
+pyaudio>=0.2.13       # аудио ввод/вывод (INMP441 + MAX98357 через ALSA)
+pyserial>=3.5         # UART для SIM900
+RPi.GPIO>=0.7.1       # GPIO (SIM900 RST, общее управление)
+rpi_ws281x>=4.3.4     # WS2812B LED матрица (PWM)
+numpy>=1.24           # обработка аудио (VAD, конвертация)
+opencv-python-headless>=4.8  # обработка кадров с камеры
+
+# Устанавливаются через apt (НЕ pip):
+#   sudo apt install python3-picamera2   — камера
+#   sudo apt install espeak-ng           — TTS (Text-to-Speech)
+#   sudo apt install portaudio19-dev     — зависимость pyaudio

@@ -1,0 +1,18 @@
+# OS / editor
+.DS_Store
+*.code-workspace
+.claude/
+
+# Secrets / local config
+.env
+.panel_config.json
+
+# Node / Python
+node_modules/
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# Logs
+*.log
